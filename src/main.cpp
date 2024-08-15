@@ -10,6 +10,9 @@ hw_timer_t *timer = NULL;
 #define MOTOR_R_STEP_PIN 18
 #define MOTOR_R_DIR_PIN 19
 
+TaskHandle_t Task1;
+TaskHandle_t Task2;
+
 const int R_SIGNAL = 15; // Pin connected to the switch
 const int L_SIGNAL = 4;  // Pin connected to the switch
 const int ledPin = 13;   // Pin của LED
@@ -37,7 +40,7 @@ bool *pL = &L;
 bool *pR = &R;
 
 void IRAM_ATTR onTimer()
-{ 
+{
   static bool state = false;
   if (state == 0)
   {
@@ -134,6 +137,7 @@ void setup()
 {
   Serial.begin(115200);
   setCpuFrequencyMhz(240);
+  
   rtc_wdt_protect_off();       // Tắt bảo vệ ghi của WDT
   rtc_wdt_disable();           // Tắt WDT
   rtc_wdt_protect_on();        // Bật lại bảo vệ ghi (nếu cần)
@@ -143,9 +147,6 @@ void setup()
   // Tắt Task Watchdog Timer cho tác vụ hiện tại
   esp_task_wdt_delete(NULL);
 
-  // rtc_wdt_set_length_of_reset_signal(RTC_WDT_SYS_RESET_SIG, RTC_WDT_LENGTH_3_2us);
-  // rtc_wdt_set_stage(RTC_WDT_STAGE0, RTC_WDT_STAGE_ACTION_RESET_SYSTEM);
-  // rtc_wdt_set_time(RTC_WDT_STAGE0, 500000);
   pinMode(R_SIGNAL, INPUT_PULLUP); // Set the button pin as input with an internal pull-up resistor
   pinMode(L_SIGNAL, INPUT_PULLUP); // Set the button pin as input with an internal pull-up resistor
 
@@ -155,67 +156,101 @@ void setup()
   pinMode(MOTOR_L_DIR_PIN, OUTPUT);
   pinMode(MOTOR_R_DIR_PIN, OUTPUT);
 
+  // create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
+  xTaskCreatePinnedToCore(
+      HandelMPU, /* Task function. */
+      "Task1",   /* name of task. */
+      10000,     /* Stack size of task */
+      NULL,      /* parameter of the task */
+      1,         /* priority of the task */
+      &Task1,    /* Task handle to keep track of created task */
+      0);        /* pin task to core 0 */
+  delay(500);
+
+  // create a task that will be executed in the Task2code() function, with priority 1 and executed on core 1
+  xTaskCreatePinnedToCore(
+      ControlMotor, /* Task function. */
+      "Task2",      /* name of task. */
+      10000,        /* Stack size of task */
+      NULL,         /* parameter of the task */
+      1,            /* priority of the task */
+      &Task2,       /* Task handle to keep track of created task */
+      1);           /* pin task to core 1 */
+  delay(500);
+}
+
+// Task1code: blinks an LED every 1000 ms
+void HandelMPU(void *pvParameters)
+{
+  Serial.print("Task1 running on core ");
+  Serial.println(xPortGetCoreID());
+
   Wire.begin();
   mpu6050.begin();
   mpu6050.calcGyroOffsets(true);
+
+  while (1)
+  {
+    mpu6050.update();
+    x_angle = mpu6050.getAngleX();
+  }
+}
+
+// Task2code: blinks an LED every 700 ms
+void ControlMotor(void *pvParameters)
+{
+  Serial.print("ControlMotor running on core ");
+  // Serial.println(xPortGetCoreID());
 
   // Attach onTimer function to our timer.
   timer = timerBegin(2, 80, true);
   timerAttachInterrupt(timer, &onTimer, true);
   timerAlarmWrite(timer, 500, true);
   timerAlarmEnable(timer);
+
+  Serial.println("run");
+  GoHOME();
+
+  delay(20);
+  Gotoposition(50);
+
+  Motor_R = true;
+  Motor_L = true;
+
+  while (1)
+  {
+    if (x_angle > 2)
+    {
+      Motor_R = true;
+      Motor_L = true;
+      digitalWrite(MOTOR_R_DIR_PIN, LOW);
+      digitalWrite(MOTOR_L_DIR_PIN, HIGH);
+      L = true;
+      R = false;
+    }
+    else if (x_angle < -2)
+    {
+      Motor_R = true;
+      Motor_L = true;
+      digitalWrite(MOTOR_R_DIR_PIN, HIGH);
+      digitalWrite(MOTOR_L_DIR_PIN, LOW);
+      L = false;
+      R = true;
+    }
+    else if ((x_angle > -2) && (x_angle < 2))
+    {
+      Motor_R = false;
+      Motor_L = false;
+    }
+    // Serial.print("\t");
+    // Serial.print(xung_R / 40, 2);
+    // Serial.print("\t");
+    // Serial.println(xung_L / 40, 2);
+
+    // Serial.print(x_angle);
+  }
 }
 
-int initt = 0;
-int cnt = 0;
-bool innit = true;
 void loop()
 {
-  //
-  // delay(500);
-  if (innit == true)
-  {
-    Serial.println("run");
-    innit = false;
-    GoHOME();
-
-    delay(20);
-    Gotoposition(50);
-
-    Motor_R = true;
-    Motor_L = true;
-  }
-
-  mpu6050.update();
-  x_angle = mpu6050.getAngleX();
-  // Khởi tạo timer với chu kỳ 1 giây (1000000 microseconds
-  if (x_angle > 2)
-  {
-    Motor_R = true;
-    Motor_L = true;
-    digitalWrite(MOTOR_R_DIR_PIN, LOW);
-    digitalWrite(MOTOR_L_DIR_PIN, HIGH);
-    L = true;
-    R = false;
-  }
-  else if (x_angle < -2)
-  {
-    Motor_R = true;
-    Motor_L = true;
-    digitalWrite(MOTOR_R_DIR_PIN, HIGH);
-    digitalWrite(MOTOR_L_DIR_PIN, LOW);
-    L = false;
-    R = true;
-  }
-  else if ((x_angle > -2) && (x_angle < 2))
-  {
-    Motor_R = false;
-    Motor_L = false;
-  }
-  // Serial.print("\t");
-  // Serial.print(xung_R / 40, 2);
-  // Serial.print("\t");
-  // Serial.println(xung_L / 40, 2);
-
-  // Serial.print(x_angle);
 }
